@@ -1,0 +1,16 @@
+name: speech-to-text-google
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - portaudio
+  - pyaudio
+  - grpcio
+  - protobuf
+  - google-cloud-speech
+  # Optional tools (uncomment if you want them)
+  # - ffmpeg
+  - pip:
+      - azure-cognitiveservices-speech
