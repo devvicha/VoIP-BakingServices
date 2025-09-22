@@ -11,13 +11,20 @@ import threading
 
 import pyaudio
 import azure.cognitiveservices.speech as speechsdk
-import pygame
-import io
-import tempfile
 
 from openai import AzureOpenAI, OpenAI
 
-WELCOME_PROMPT = "ආයුබෝවන්, සම්පත් බැංකුවට ඔබව සාදරයෙන් පිළිගනිමු. මට උදව් කළ හැක්කේ කෙසේද?"
+WELCOME_PROMPT = "ආයුබෝවන්, සම්පත් බැංකුවට ඔබව සාදරයෙන්  පිළිගන්නෙමු. මම ඔබට සහය දැක්වීමට සිටින, සම්පත් බැංකුවේම කෘතිම බුද්ධි නියෝජිතයාය....මම අද කෙසේද ඔබට  සහාය වන්නේ?"
+FAREWELL_DISPLAY = "🛑 පරිශීලකයා විසින් නතර කරන ලදී\n👋 සම්පත් බැංකුව හා එක් වූවාට ඔබට ස්තූතියි සුභ දවසක්!"
+FAREWELL_TTS = "සම්පත් බැංකුව හා එක් වූවාට ඔබට ස්තූතියි..... සුභ දවසක්!!"
+
+TTS_SAMPLE_RATE = 16000
+TTS_CHANNELS = 1
+TTS_SAMPLE_WIDTH = 2  # bytes per sample for 16-bit PCM
+TTS_CHUNK_DURATION = 0.1  # seconds
+TTS_CHUNK_BYTES = int(TTS_SAMPLE_RATE * TTS_CHANNELS * TTS_SAMPLE_WIDTH * TTS_CHUNK_DURATION)
+
+stop_tts_event = threading.Event()
 
 # Set UTF-8 encoding for proper Sinhala character display
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -175,6 +182,8 @@ def on_recognizing(evt: speechsdk.SpeechRecognitionEventArgs, show_lang: bool = 
     if not text:
         return
 
+    stop_tts_event.set()
+
     prefix = ""
     if show_lang and getattr(evt.result, "language", None):
         prefix = f"[{evt.result.language}] "
@@ -187,6 +196,8 @@ def on_recognizing(evt: speechsdk.SpeechRecognitionEventArgs, show_lang: bool = 
 
 def on_recognized(evt: speechsdk.SpeechRecognitionEventArgs, show_lang: bool = True) -> None:
     """Handle final recognition events and trigger AI/TTS"""
+    stop_tts_event.set()
+
     if evt.result.reason != speechsdk.ResultReason.RecognizedSpeech:
         if evt.result.reason == speechsdk.ResultReason.NoMatch:
             _clear_interim_line()
@@ -300,19 +311,25 @@ try:
             subscription=os.getenv('AZURE_SPEECH_KEY'),
             region=os.getenv('AZURE_SPEECH_REGION')
         )
-        
+
+        # Emit raw PCM so playback can be interrupted mid-stream
+        speech_config.set_speech_synthesis_output_format(
+            speechsdk.SpeechSynthesisOutputFormat.Raw16Khz16BitMonoPcm
+        )
+
         # Set Sinhala voice
         voice_name = os.getenv('AZURE_TTS_VOICE', 'si-LK-ThiliniNeural')
         speech_config.speech_synthesis_voice_name = voice_name
-        
-        # Use default audio output
-        speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config)
-        
+
+        # Disable default speaker output; we stream the bytes manually
+        speech_synthesizer = speechsdk.SpeechSynthesizer(
+            speech_config=speech_config,
+            audio_config=None,
+        )
+
         enable_tts = os.getenv('ENABLE_TTS', 'false').lower() == 'true'
-        
+
         if enable_tts:
-            # Initialize pygame mixer for audio
-            pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
             print(f"🔊 සිංහල TTS සක්‍රිය: {voice_name}")
         
 except Exception as e:
@@ -458,11 +475,13 @@ def stream_transcribe(
 
     speech_recognizer.start_continuous_recognition()
 
+    interrupted = False
+
     try:
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
-        pass
+        interrupted = True
     finally:
         audio_stop_event.set()
         speech_recognizer.stop_continuous_recognition()
@@ -474,18 +493,22 @@ def stream_transcribe(
         if audio_thread and audio_thread.is_alive():
             audio_thread.join(timeout=1.0)
 
+    if interrupted:
+        raise KeyboardInterrupt
+
 def speak_sinhala_text(text: str, *, force: bool = False):
-    """Speak Sinhala text using Azure TTS"""
+    """Speak Sinhala text using Azure TTS with barge-in support"""
     if ((not enable_tts) and not force) or not speech_synthesizer or not text.strip():
         return
-    
+
     try:
-        print("🔊 කථනය කරමින්...", end="", flush=True)
-        
-        # Clean the text for speech
+        # Stop any active playback before starting a new utterance
+        stop_tts_event.set()
+
         clean_text = normalize_sinhala_text(text)
-        
-        # Create SSML for better pronunciation
+        if not clean_text:
+            return
+
         ssml = f"""
         <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="si-LK">
             <voice name="{os.getenv('AZURE_TTS_VOICE', 'si-LK-ThiliniNeural')}">
@@ -495,18 +518,52 @@ def speak_sinhala_text(text: str, *, force: bool = False):
             </voice>
         </speak>
         """
-        
-        # Synthesize speech
+
         result = speech_synthesizer.speak_ssml_async(ssml).get()
-        
-        # Clear the speaking indicator
-        print("\r" + " " * 20 + "\r", end="", flush=True)
-        
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            print("🎵 කථනය සම්පූර්ණයි", flush=True)
-        else:
+        if result.reason != speechsdk.ResultReason.SynthesizingAudioCompleted:
             print(f"❌ TTS දෝෂයක්: {result.reason}")
-            
+            return
+
+        audio_data = result.audio_data or b""
+        if not audio_data:
+            print("❌ TTS දෝෂයක්: හිස් ශ්‍රව්‍ය දත්ත")
+            return
+
+        stop_tts_event.clear()
+        print("🔊 කථනය කරමින්...", end="", flush=True)
+
+        p = pyaudio.PyAudio()
+        stream = None
+        try:
+            stream = p.open(
+                format=pyaudio.paInt16,
+                channels=TTS_CHANNELS,
+                rate=TTS_SAMPLE_RATE,
+                output=True,
+            )
+
+            chunk_size = max(TTS_CHUNK_BYTES, 320)
+            for offset in range(0, len(audio_data), chunk_size):
+                if stop_tts_event.is_set():
+                    break
+                stream.write(audio_data[offset:offset + chunk_size])
+        finally:
+            if stream:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+            p.terminate()
+
+        # Clear the speaking indicator line
+        print("\r" + " " * 30 + "\r", end="", flush=True)
+
+        if stop_tts_event.is_set():
+            print("🛑 TTS නතර විය", flush=True)
+        else:
+            print("🎵 කථනය සම්පූර්ණයි", flush=True)
+
     except Exception as e:
         print(f"\r❌ කථන දෝෂයක්: {str(e)}")
 
@@ -555,8 +612,8 @@ def main():
             channels=args.channels,
         )
     except KeyboardInterrupt:
-        print("\n\n🛑 පරිශීලකයා විසින් නතර කරන ලදී")
-        print("👋 ආයුබෝවන්!")
+        print(f"\n\n{FAREWELL_DISPLAY}")
+        speak_sinhala_text(FAREWELL_TTS, force=True)
     except Exception as e:
         print(f"\n❌ දෝෂයක්: {str(e)}")
 
