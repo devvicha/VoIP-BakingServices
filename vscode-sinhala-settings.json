@@ -1,0 +1,22 @@
+{
+  "terminal.integrated.fontFamily": "Sinhala Sangam MN, SF Mono, Menlo, Monaco, 'Courier New', monospace",
+  "terminal.integrated.fontSize": 13,
+  "terminal.integrated.lineHeight": 1.2,
+  "editor.fontFamily": "'Sinhala Sangam MN', 'SF Mono', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+  "editor.fontSize": 13,
+  "editor.lineHeight": 1.4,
+  "terminal.integrated.unicodeVersion": "11",
+  "editor.unicodeHighlight.allowedCharacters": {
+    "සි": true,
+    "ං": true,
+    "හ": true,
+    "ල": true
+  },
+  "editor.fontLigatures": true,
+  "editor.renderWhitespace": "selection",
+  "terminal.integrated.gpuAcceleration": "on",
+  "terminal.integrated.env.osx": {
+    "LANG": "si_LK.UTF-8",
+    "LC_ALL": "si_LK.UTF-8"
+  }
+}
