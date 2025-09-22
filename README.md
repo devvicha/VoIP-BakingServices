@@ -1,84 +1,68 @@
-Google Speech-to-Text (Sinhala + English) — Live Streaming
-==========================================================
+# VoIP-BakingServices — Sinhala Voice Assistant
 
-This project streams audio from your Mac's input device (e.g., your iPhone acting as a mic) to Google Cloud Speech-to-Text and prints live transcriptions. It supports Sinhala (`si-LK`) and English (`en-US`, `en-GB`, etc.) via multi-language recognition.
+Streams Sinhala audio from macOS or iPhone microphones into Azure Speech for live transcription, normalises Unicode, shows interim/final text with language tags, manages device selection and errors, optionally adds OpenAI replies plus Sinhala TTS with a forced welcome greeting, and supports device listing, custom capture rates, and `.env` / CLI configuration.
 
-Prerequisites
--------------
-- Conda environment: `conda activate speech-to-text-google`
-- Packages (already in `environment.yml`): `pyaudio`, `portaudio`, `google-cloud-speech`, `grpcio`, `protobuf`, `azure-cognitiveservices-speech`
-- Google Cloud project with Speech-to-Text API enabled
-- Service account JSON credentials
+## Key Features
+- **Real-time Sinhala STT** powered by Azure Cognitive Services with interim and final captions.
+- **Warm customer greeting** (`"ආයුබෝවන්…"`) spoken before listening begins, ensuring users hear a prompt immediately.
+- **Optional AI assistant**: send recognised utterances to OpenAI for Sinhala responses when `ENABLE_AI_RESPONSES=true`.
+- **Sinhala TTS playback** using Azure neural voices (enable via `ENABLE_TTS=true`).
+- **Automatic mic selection** (auto-picks iPhone input when available) with manual override and device listing support.
+- **Robust Unicode handling** so Sinhala text renders correctly in terminals and logs.
 
-Google Cloud Setup
-------------------
-1. Create a Google Cloud project (or use an existing one).
-2. Enable the Speech-to-Text API.
-3. Create a service account and download a JSON key.
-4. Point the client to your key:
+## Requirements
+- Python 3.13 (uses `.venv` in this repository by default).
+- Azure Speech resource (`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`).
+- Optional OpenAI API key (`OPENAI_API_KEY`) when enabling AI replies.
+- macOS microphone permissions granted to your terminal/IDE (`System Settings → Privacy & Security → Microphone`).
+- Audio dependencies installed inside the virtualenv:
+  ```bash
+  python -m pip install azure-cognitiveservices-speech pyaudio pygame openai
+  ```
 
-   macOS/zsh example:
-   `export GOOGLE_APPLICATION_CREDENTIALS="/absolute/path/to/your-key.json"`
+## Project Setup
+1. Clone the repository and create a virtual environment (if you do not already use the included `.venv`).
+2. Install the dependencies listed above inside that environment.
+3. Copy `.env.example` to `.env` (if available) or create `.env` manually with:
+   ```dotenv
+   AZURE_SPEECH_KEY=your-key
+   AZURE_SPEECH_REGION=uaenorth
+   AZURE_SPEECH_LANGS=si-LK
+   AZURE_TTS_VOICE=si-LK-ThiliniNeural
+   ENABLE_TTS=true
+   ENABLE_AI_RESPONSES=false
+   OPENAI_API_KEY=optional-openai-key
+   OPENAI_MODEL=gpt-4o
+   ```
+4. (Optional) Follow the Sinhala font instructions in `SINHALA_SETUP.md` and `vscode-sinhala-settings.json` if your terminal renders Sinhala poorly.
 
-Using Your iPhone as a Microphone
----------------------------------
-Use any app that exposes your iPhone as a virtual mic on macOS (e.g., WO Mic or similar). Once connected, macOS will show a new input device. You can select it by index in this project.
+## Running the Assistant
+List input devices if you need to confirm the microphone index:
+```bash
+python src/stream_azure_stt.py --list-devices
+```
 
-List Input Devices
-------------------
-`python src/list_devices.py`
+Start live transcription (auto-selects iPhone mic when possible):
+```bash
+python src/stream_azure_stt.py --rate 16000 --channels 1
+```
 
-Note the index of your iPhone mic device and its default sample rate.
+Common flags:
+- `--key`, `--region`: override environment variables for Azure credentials.
+- `--device`: specify a particular microphone index.
+- `--rate`, `--channels`: match your audio interface (defaults pulled from env or sensible fallbacks).
 
-Run Live Transcription
-----------------------
-Basic (Sinhala primary, English alt):
-`python src/stream_google_stt.py --lang si-LK --alt en-US --rate 44100 --channels 1 --device <INDEX>`
+When the script launches it prints system status, plays the Sinhala welcome message via TTS, and then begins streaming audio to Azure Speech. Recognised text appears live; if AI responses are enabled, they are printed and spoken back in Sinhala.
 
-Examples:
-- Sinhala primary, English alt:
-  `python src/stream_google_stt.py --lang si-LK --alt en-US --rate 44100 --device 3`
-- English primary with Sinhala alt:
-  `python src/stream_google_stt.py --lang en-US --alt si-LK --rate 48000 --device 3`
+## Troubleshooting
+- **OpenAI connection error**: confirm network access and the `OPENAI_API_KEY` environment variable.
+- **`SPXERR_MIC_ERROR`**: check macOS microphone permissions and verify the selected device is connected.
+- **CoreAudio / TTS failures**: ensure no other app is exclusively using the audio output device and that `ENABLE_TTS` is set correctly.
+- **Sinhala text rendering issues**: revisit `SINHALA_SETUP.md` for terminal/font configuration tips.
 
-Flags
------
-- `--lang`: Primary BCP-47 language code (e.g., `si-LK`, `en-US`).
-- `--alt`: Comma-separated alternative language codes for auto-detect.
-- `--rate`: Sample rate in Hz. Match your input device (44100 or 48000 common).
-- `--channels`: Channels (1 recommended).
-- `--device`: Input device index from `src/list_devices.py`. Omit to use default input.
+## Repository Notes
+- `src/stream_azure_stt.py` holds the Azure/OpenAI pipeline implementation and the welcome greeting logic.
+- `SINHALA_SETUP.md` documents macOS + VSCode steps for Sinhala input/output support.
+- `vscode-sinhala-settings.json` provides a ready-to-paste VS Code settings snippet for Sinhala-friendly fonts.
 
-Notes
------
-- Match `--rate` and `--channels` to your input device to avoid audio issues.
-- The script prints interim results in-place, and final results on new lines.
-- Stop with Ctrl+C.
-
-Troubleshooting
----------------
-- Authentication: ensure `GOOGLE_APPLICATION_CREDENTIALS` is exported and file is readable.
-- Microphone: if you get silence or errors, try a different `--rate` (44100 vs 48000) and verify the device index.
-- Permissions: macOS may prompt to allow microphone access for your terminal.
-
-Azure Speech Recognition
-------------------------
-Set environment variables from your Azure Speech resource (from the Azure portal):
-- `export AZURE_SPEECH_KEY="<KEY 1 or KEY 2>"`
-- `export AZURE_SPEECH_REGION="uaenorth"` (or set `AZURE_SPEECH_ENDPOINT="https://uaenorth.api.cognitive.microsoft.com/"`)
-- Optional language list: `export AZURE_SPEECH_LANGS="si-LK,en-US"`
-
-List input devices (same as for Google):
-`python src/list_devices.py`
-
-Run Azure live transcription with auto language detection:
-`python src/stream_azure_stt.py --rate 44100 --device <INDEX>`
-
-Options:
-- `--key`, `--region`, `--endpoint` can be passed as flags or via env vars.
-- `--langs` a comma-separated list for auto-detect (e.g., `si-LK,en-US`).
-- `--rate`, `--channels`, `--device` should match your input.
-
-Notes:
-- Azure auto language detection uses your candidate list. Recognition quality improves if you list only languages you expect.
-- Ensure the language codes you use are supported by Azure in your region.
+Happy building — ආයුබෝවන්!
